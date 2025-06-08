@@ -1,0 +1,249 @@
+---
+title: "re_tidy"
+author: "Elia Cornali"
+date: "2025-03-03"
+output: 
+  html_document:
+  toc: true
+---
+
+
+## Setup 
+
+```{r setup, message=FALSE}
+
+# Import libraries
+
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(readr)
+library(stringr)
+library(purrr)
+library(readxl)
+
+```
+
+## Manually clean data
+
+According to Wickham and Grolemund (2017), data are tidy if: each variable has its own column, each observation its own row and each value its own cell. To achieve machine-readability each cell in the data should contain one value of one type.
+The manual cleaning of the data comprised the erasure of unnecessary variables (e.g. "Citation", "Depth", "Sample date", "Description of data source", " Value treatment"). Moreover the first three rows were deleted, adding the information about units, "mean" and "n" to the associated variables. Finally the names of the variables were written in capital letters and spaces were replaced by "_". 
+
+
+## Read data
+
+```{r read data, message=FALSE}
+
+# Read csv data
+
+database <- readr::read_csv(
+  here::here("data/tidy_data_manually_cleaned.csv"))
+
+```
+
+
+## Clean data
+
+```{r clean data, message=FALSE}
+
+# Select variables of interest
+
+database_clean <- select(
+  database,
+  starts_with("Experiment"),
+  starts_with("Time"),
+  starts_with("mean"))
+
+# Rename variables in tidy data format
+
+database_clean <- rename(
+  database_clean,
+  EXPERIMENT = starts_with("Experiment"),
+  TIME_YEARS = starts_with("Time"),
+  MEAN_AMBIENT_CO2 = starts_with("mean ambient"),
+  MEAN_INCREASED_CO2 = starts_with("mean increased"))
+
+# Erase rows missing data
+
+database_clean <- database_clean[rowSums(is.na(database_clean)) != ncol(database_clean),]
+
+```
+
+
+## Aggregate data per experiment
+
+```{r aggregate data per experiment, message=FALSE}
+
+# Fill NA values with name of experiment site
+# Aggregate by experiment
+
+experiment_aggregation <- database_clean |>
+  
+  tidyr::fill(
+    EXPERIMENT, .direction = "down") |>
+  
+  dplyr::group_by(EXPERIMENT) |>
+  
+  dplyr::summarise(
+    across(where(is.numeric), mean, na.rm = TRUE))
+
+# Create table to visualize results
+
+knitr::kable(
+  experiment_aggregation, 
+  format = "html",
+  caption = "DATA PER EXPERIMENT",
+  align = "c",
+  digits = 2)
+
+```
+
+
+## Aggregate data per phase
+
+```{r aggregate data per phase, message=FALSE}
+
+# Mutate variable TIME_YEARS to early, mid and late phase
+# Rename variable to PHASE
+# Aggregate across all experiments into three phases, calculate mean of other variables
+# Arrange output according to PHASE
+
+phase_aggregation <- database_clean |>
+  
+  dplyr::mutate(
+    TIME_YEARS = case_when(
+      TIME_YEARS < 3 ~ "EARLY",
+      TIME_YEARS >= 3 & TIME_YEARS <= 6 ~ "MID",
+      TIME_YEARS > 6 ~ "LATE")) |>
+  
+  dplyr::rename(
+    PHASE = TIME_YEARS) |>
+
+  dplyr::group_by(PHASE) |>
+  
+  dplyr::summarise(
+    across(where(is.numeric), mean, na.rm = TRUE)) |>
+      
+  dplyr::mutate(
+    PHASE = factor(
+      PHASE,
+      levels = c("EARLY","MID","LATE"))) |>
+  
+  dplyr::arrange(
+    PHASE)
+
+# Create table to visualize results
+
+knitr::kable(
+  phase_aggregation, 
+  format = "html",
+  caption = "AGGREGATION INTO THREE PHASES",
+  align = "c",
+  digits = 2) 
+
+```
+
+
+## Calculate log-response ratio for each phase
+
+
+```{r calculate log-response ratio for each phase, message=FALSE}
+
+# Add variable LOG_RESPONSE and calculate log-response ratio for each phase
+
+log_response_phase <- phase_aggregation |>
+  
+  dplyr::mutate(
+    LOG_RESPONSE_PHASE = log(
+      phase_aggregation["MEAN_INCREASED_CO2"] / 
+        phase_aggregation["MEAN_AMBIENT_CO2"])) |>
+  
+  dplyr::select(
+    PHASE,
+    LOG_RESPONSE_PHASE)
+    
+# Create table to visualize results
+
+knitr::kable(
+  log_response_phase, 
+  format = "html",
+  caption = "LOG-RESPONSE RATIO FOR EACH PHASE",
+  align = "c",
+  digits = 2)
+
+```
+
+
+## Calculate log-response ratio for each parallel observation of SOC
+
+```{r calculate log-response ratio for each parallel observation of SOC, message=FALSE}
+
+# Add variable LOG_RESPONSE_PARALLEL_OBSERVATION and calculate mean log-response 
+
+log_response_parallel_observation <- database_clean |>
+  
+  dplyr::mutate(
+    LOG_RESPONSE_PARALLEL_OBSERVATION = unlist(log(
+      database_clean["MEAN_INCREASED_CO2"] / 
+        database_clean["MEAN_AMBIENT_CO2"])))
+
+```
+
+
+## Aggregate log response ratios by taking their mean
+
+```{r aggregate log response ratios by taking their mean, message=FALSE}
+
+# Divide log response ratio in three categories. 
+# Group by category and count number of measurements per category
+# Aggregate by category taking mean values
+
+mean_log_response_parallel_observation <- log_response_parallel_observation |> 
+
+  dplyr::mutate(
+    SOC_CHANGE = case_when(
+      LOG_RESPONSE_PARALLEL_OBSERVATION < 0 ~ "DECREASE",
+      LOG_RESPONSE_PARALLEL_OBSERVATION == 0 ~ "NO CHANGE",
+      LOG_RESPONSE_PARALLEL_OBSERVATION > 0 ~ "INCREASE")) |>
+
+  dplyr::group_by(SOC_CHANGE) |>
+  
+  dplyr::mutate(
+    NR_MEASUREMENTS = table(SOC_CHANGE)) |>
+
+  dplyr::summarise(
+    MEAN_LOG_RESPONSE = mean(LOG_RESPONSE_PARALLEL_OBSERVATION),
+    NR_MEASUREMENTS = mean(NR_MEASUREMENTS), na.rm = TRUE)
+
+
+# Create table to visualize results
+
+knitr::kable(
+  mean_log_response_parallel_observation, 
+  format = "html",
+  caption = "MEAN LOG-RESPONSE RATIO",
+  align = "c",
+  digits = 2)
+
+```
+
+
+## What are the data that you are looking at?
+
+“Database S1” provides information about impacts of increased atmospheric CO2 contents on soil organic carbon. It contains data of soil organic carbon measurements in experiments, where ecosystems are exposed to ambient (low) and elevated (high) CO concentrations. The mean soil organic carbon of multiple samples (“n”) is recorded within each experiment for different sample dates. Information is provided for the time in years since the start of the experiment (“Time (years)”). 
+
+
+## What do you expect your analysis to show, what is your hypothesis? 
+How should soil organic matter content change under elevated CO?
+
+The hypothesis is that with increasing atmospheric CO2, stimulating plant growth, the C input in soil would increase. This trend might be countered by an altering of microbial decomposition in response of rising atmospheric CO2. In fact, atmospheric CO2 enrichment can increase soil water content, improving decomposition rates in semiarid systems. Assuming that the stimulation of plant growth is temporally delayed and that after a certain point the system is balanced again, the data is supposed to depict an increase in soil organic C between the start- and the mid-phase, followed by a reduction of the magnitude of the former increase during the late phase. 
+
+
+## Interpret your results after aggregating the data: What do your final 
+numbers mean? Do they support your initial hypothesis? Why so, why not?
+
+The first aggregation of data illustrates differences between three phases of the experiment (e.g. early, mid and late), allowing to identify time-related trends. The log-response ratio suggests that there is an increment of soil organic C in response to increased CO2 contents in the early and mid phase, while in the late phase soil organic carbon decreases relatively to the ambient content. This aligns with the hypothesis of a delayed onset of the plant growth. The decrease in SOC in the late phase could be related to higher microbial activity compared to plant growth.
+The second aggregation illustrates the magnitude of change in soil organic carbon. Three categories arise (e.g increase, decrease and no change of soil organic carbon). The number of measurements displays how many values fall in each category. The data suggests that there are more values increasing than decreasing, with 12 measurements showing no variations. The results are in accordance with the hypothesis, showing an overall increase in SOC.  
+
+
+

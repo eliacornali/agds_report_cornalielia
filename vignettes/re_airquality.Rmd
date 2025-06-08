@@ -1,0 +1,350 @@
+---
+title: "re_airquality"
+author: "Elia Cornali"
+date: "2025-05-19"
+output: 
+  html_document:
+  toc: true
+---
+
+
+## Setup
+
+```{r setup, message=FALSE}
+
+# Import libraries
+
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(dplyr)
+library(datasets)
+library(tidyverse)
+```
+
+
+## Description of the dataset
+
+```{r description of the dataset, message=FALSE}
+
+# Save airquality dataset as variable
+
+mean_ozone <- datasets::airquality
+
+```
+
+The "airquality" data frame shows the daily air quality measurements in New York, from May to September 1973. It contains 153 observations for 6 distinct variables. There are two time variables, namely "Month" and "Day", and 4 quantities of interest (e.g., Ozone, Solar.R, Wind and Temp). The Ozone variable indicates the mean ozone in parts per billion (ppb) from 1300 to 1500 hours at Roosevelt Island. The Solar. R variable shows the solar radiation in Langleys (Ly) in the frequency band 4000 - 7700 Angstroms from 0800 to 1200 hours at Central Park. The Wind variable refers to the average wind speed in miles per hour (mph) at 0700 and 1000 hours at LaGuardia Airport and the Temp variable depicts the maximum daily temperature in degrees Fahrenheit (F) at LaGuardia Airport. The data were obtained from the Ney York State Department of Conservation (ozone data) and the National Weather Service (meteorological data) (Chamber et al., 1983)
+
+
+## Data quality analysis
+
+```{r data quality analysis, message=FALSE}
+
+# Prepare plot data
+# Mutate month variable 
+
+mean_ozone_month <- mean_ozone |>
+  
+  mutate(Month = month(Month, label = TRUE))
+  
+# Identify data coverage per month
+mean_ozone_nr_values = mean_ozone_month |>
+  
+  mutate(Nr_Values = ifelse(is.na(Ozone) == FALSE, 1, 0)) |>
+  
+  group_by(Month) |>
+  
+  reframe(Month, Nr_Values = sum(Nr_Values))
+
+
+
+# Violin plot + jittered points
+plot_1 <- ggplot(
+  data = mean_ozone_month,
+  aes(x = Month, y = Ozone)) +
+  geom_violin(fill = "grey70", outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.3, color = "red") +
+  labs(title = "Data Distribution",
+       x = "Month",
+       y = "Ozone (ppb)") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Density plot
+plot_2 <- ggplot(
+  data = mean_ozone_month,
+  aes(x = Ozone, y = ..density..)) +
+  geom_histogram(fill = "grey70", color = "black") +
+  geom_density(color = "red", linewidth = 1) +
+  labs(title = "Ozone Distribution", 
+       x = "Ozone (ppb)",
+       y = "Density") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+# Custom plot
+plot_3 <- ggplot(
+  data = mean_ozone_nr_values,
+  aes(x = Month, y = Nr_Values)) +
+  geom_segment(aes(x = Month, xend = Month, y = 0, yend = Nr_Values), 
+               size = 3, color = "grey40") +
+  geom_point(aes(x = Month, y = Nr_Values), size = 8, color = "red") +
+  geom_text(aes(x = Month, y = Nr_Values, label = format(Nr_Values, digits = 2)),
+            size = 3, color = "white") +
+  labs(title = "Ozone Data Coverage",
+       x = "Month", 
+       y = expression(paste("Number of data points"))) +
+  scale_y_continuous(limits = c(0, 31), expand = c(0, 0)) +
+  coord_flip() +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Cowplot
+figure_1 <- cowplot::plot_grid(
+  data = plot_1, plot_2, plot_3, 
+  ncol = 3, 
+  labels = "auto")
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Data quality analysis.png"),
+  plot = figure_1,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_1
+
+```
+To analyse the data quality of the airquality dataset various plots are shown in the figure above. 
+
+Plot (a) depicts the distribution of Ozone data points for each month. The plot visualizes the range of Ozone concentration per month. Moreover, by analyzing the shape of the violin plots we can deduce that in the months of May, June and September Ozone values are concentrated between 0 and 50 (ppb), whereas Ozone concentrations during July and August are distributed over a wider range, with more values reaching higher concentrations of about 100 (ppb). 
+
+Plot (b) depicts the density of Ozone values aiming to detect the presence of outliers. The majority of Ozone data points cover concentrations between 20 and 40 ppb. Ozone concentrations at the margins of the distribution that are covered by a low density can be seen as outliers. 
+
+Plot (c) visualizes the number of data points per month. It can be seen, that the month of June holds less readings and is therefore less representative.
+
+
+# Density of data points
+
+```{r density of data points, message=FALSE}
+
+# Prepare Data 
+# Display values ordered by day
+mean_ozone_day <- mean_ozone |>
+  
+  mutate(Date = make_date(year = 1973 , month = Month, day = Day)) |>
+
+  mutate(doy = yday(Date)) |>
+  
+  group_by(doy)
+
+# Density raster for Solar Radiation 
+
+plot_6 <- ggplot(
+    data = mean_ozone_month,
+    aes(x = Solar.R, y = Ozone)) +
+  stat_density_2d(
+    geom = "raster", # the geometric object to display the data
+    aes(fill = after_stat(density)), # using `density`, a variable calculated by the stat
+    contour = FALSE 
+    ) +
+  scale_fill_viridis_c() +
+  labs(title = "Solar Radiation Density",
+       x = "Solar Radiation (Ly)", 
+       y = "Ozone (ppb)",
+       fill = "Density") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(expand = c(0, 0)) +  # avoid gap between plotting area and axis
+  scale_y_continuous(expand = c(0, 0)) 
+
+# Density plot for Wind
+plot_7 <- ggplot(
+    data = mean_ozone_month,
+    aes(x = Wind, y = Ozone)) +
+  stat_density_2d(
+    geom = "raster", # the geometric object to display the data
+    aes(fill = after_stat(density)), # using `density`, a variable calculated by the stat
+    contour = FALSE 
+    ) +
+  scale_fill_viridis_c() +
+  labs(title = "Wind Speed Density",
+       x = "Wind Speed (mph)", 
+       y = "Ozone (ppb)",
+       fill = "Density") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(expand = c(0, 0)) +  # avoid gap between plotting area and axis
+  scale_y_continuous(expand = c(0, 0))
+
+# Density plot for Temperature
+plot_8 <- ggplot(
+    data = mean_ozone_month,
+    aes(x = Temp, y = Ozone)) +
+  stat_density_2d(
+    geom = "raster", # the geometric object to display the data
+    aes(fill = after_stat(density)), # using `density`, a variable calculated by the stat
+    contour = FALSE 
+    ) +
+  scale_fill_viridis_c() +
+  labs(title = "Temperature Density",
+       x = "Temperature (F)", 
+       y = "Ozone (ppb)",
+       fill = "Density") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(expand = c(0, 0)) +  # avoid gap between plotting area and axis
+  scale_y_continuous(expand = c(0, 0))
+
+# Density plot for Day
+plot_9 <- ggplot(
+    data = mean_ozone_day,
+    aes(x = doy, y = Ozone)) +
+  stat_density_2d(
+    geom = "raster", # the geometric object to display the data
+    aes(fill = after_stat(density)), # using `density`, a variable calculated by the stat
+    contour = FALSE 
+    ) +
+  scale_fill_viridis_c() +
+  labs(title = "Day of the Year Density",
+       x = "Day of the Year", 
+       y = "Ozone (ppb)",
+       fill = "Density") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(expand = c(0, 0)) +  # avoid gap between plotting area and axis
+  scale_y_continuous(expand = c(0, 0))
+
+# Combine plots
+figure_2 <- cowplot::plot_grid(
+  data = plot_6, plot_7, plot_8, plot_9,
+  ncol = 2,
+  labels = "auto")
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Density of data points.png"),
+  plot = figure_2,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_2
+
+```
+
+The Figure above shows the density of Ozone data points and various variables.
+Plot (a) depicts the density of data points between Ozone and Solar Radiation. The highest density of data points cover low Ozone concentration (~ 40 ppb) and high Solar Radiation (~ 250 Ly).
+Plot (b) visualizes the density of data points between Ozone and Wind Speed. The highest density of data points cover low Ozone concentration (~ 30 ppb) and mid Wind Speeds (~ 10 mph).
+Plot (c) shows the density of data points between Ozone and Temperature. The highest density of data points covers low Ozone concentration (~ 30) and mid Temperatures (between 70 and 80 F).
+Plot (d) depicts the density of data points between Ozone and the Day of the Year. The highest density of data points cover low Ozone concentration (between 20 and 30 ppb) and the earliest (140th Day) and latest time of the data set (250th Day). 
+
+
+## Seasonal trends of data
+
+```{r seasonal trends of data, message=FALSE}
+
+# Prepare data
+# Convert data to long format
+mean_ozone_long_month <- mean_ozone_month |>
+  
+  select(Ozone, Solar.R, Wind, Temp, Month) |>
+  
+  pivot_longer(cols = -Month, names_to = "Variable", values_to = "Value") |>
+  
+  group_by(Month, Variable) |>
+  
+  summarise(MeanValue = mean(Value, na.rm = TRUE), .groups = "drop")
+
+
+# Bar chart plot
+figure_3 <- ggplot(
+  data = mean_ozone_long_month, 
+  aes(x = factor(Month), y = MeanValue, fill = Variable)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_viridis_d() +
+  labs(title = "Monthly Averages of Variables",
+       x = "Month", 
+       y = "Mean Value") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Seasonal trends of data.png"),
+  plot = figure_3,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_3
+
+```
+The figure above represents the monthly averages of the four quantitative variables of the airquality dataset. The representation allows to identify monthly trends for each variable. There is a significant increase in Ozone concentration (~ 60 ppb) during the months of July and August, whereas  the months of May, June and September show lower concentrations (~ 25 ppb). The Solar radiation and the Temperature variable follow the same trend, although with a less accentuated increase. Finally, the Wind speeds show a rather constant behaviour in respect to monthly changes. 
+
+
+## Impacts of solar radiation, wind and temperature on ozone concentration
+
+```{r impacts of solar radiation, wind and temperature on ozone concentration, message=FALSE}
+
+# Ozone, Solar Radiation and Temperature plot
+plot_4 <- ggplot(
+  data = mean_ozone_month,
+  aes(x = Solar.R, y = Ozone, color = Temp)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(color = "black") +
+  theme_classic() +
+  labs(title = "Ozone, Solar R. and T dependencies",
+       x = "Solar Radiation (Ly)", 
+       y = "Ozone (ppb)",
+       color = "T (F)") +
+  scale_color_viridis_c() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Ozone, Wind and Temperature plot
+plot_5 <- ggplot(
+  data = mean_ozone_month,
+  aes(x = Wind, y = Ozone, color = Temp)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(color = "black") +
+  scale_color_viridis_c() + 
+  labs(title = "Ozone, Wind and T dependencies",
+       x = "Wind Speed (mph)", 
+       y = "Ozone (ppb)",
+       color = "T (F)") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+# combine plots
+figure_4 <- cowplot::plot_grid(
+  data = plot_4, plot_5,
+  ncol = 2,
+  labels = "auto")
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Impacts of solar radiation, wind and temperature on ozone concentration.png"),
+  plot = figure_4,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_4
+
+```
+Multiple variables were depicted in the scatter plots above, to further investigate dependencies within the dataset.
+
+Plot (a) visualizes how Ozone concentrations vary in relation to Solar Radiation and Temperature. Ozone increases with increasing Solar Radiation until approximately 200 (Ly), followed by a decrease in concentration between 200 and 300 Ly. 
+
+Plot (b) depicts the co-dependency of Ozone and Wind Speed. At lower Wind Speeds (~ 5 mph) Ozone concentrations are highest (~ 120 ppb), further decreasing with increasing Wind Speeds. Therefore, we can deduce that Ozone concentration is inverse proportional to Wind Speeds. There is also a trend between Temperature and Wind Speeds, suggesting that Temperature decreases with higher Wind Speeds. 
+
+Both plots suggest that Ozone concentration is proportional to Temperature. High Ozone values are connected to high Temperatures and low Ozone Values to low Temperatures.
+
+
+## References
+
+Chambers, J. M., Cleveland, W. S., Kleiner, B. and Tukey, P. A. (1983) Graphical Methods for Data Analysis. Belmont, CA: Wadsworth.
+

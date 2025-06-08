@@ -1,2 +1,2 @@
-# agds_report_cornalielia
-Report repository
+# agds_report_eliacornali
+Report for Applied Geodata Science - Elia Cornali

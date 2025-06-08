@@ -1,0 +1,367 @@
+---
+title: "re_ml_01"
+author: "Elia Cornali"
+date: "2025-06-01"
+output: 
+  html_document:
+  toc: true
+---
+
+
+## Setup
+
+```{r setup, message=FALSE}
+
+# Import libraries
+
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+library(caret)
+library(recipes)
+
+```
+
+
+## Load data and functions
+
+```{r load data and functions, message=FALSE}
+
+# Load data
+daily_fluxes <- readr::read_csv(
+  here::here("./data/FLX_CH-Dav_FLUXNET2015_FULLSET_DD_1997-2014_1-3.csv"))
+  
+
+# Load functions
+source(here::here("R/eval_model.R"))
+source(here::here("R/eval_knn_diff_k.R"))
+source(here::here("R/eval_knn_optimal_k.R"))
+
+```
+
+
+## Data wrangling
+
+```{r data wrangling, message=FALSE}
+
+daily_fluxes <- daily_fluxes |>  
+  
+  # select only the variables we are interested in
+  dplyr::select(TIMESTAMP,
+                GPP_NT_VUT_REF,    # the target
+                ends_with("_QC"),  # quality control info
+                ends_with("_F"),   # includes all all meteorological covariates
+                -contains("JSB")   # weird useless variable
+                ) |>
+
+  # convert to a nice date object
+  dplyr::mutate(TIMESTAMP = lubridate::ymd(TIMESTAMP)) |>
+
+  # set all -9999 to NA
+  mutate(across(where(is.numeric), ~na_if(., -9999))) |> 
+  
+  # retain only data based on >=80% good-quality measurements
+  # overwrite bad data with NA (not dropping rows)
+  dplyr::mutate(GPP_NT_VUT_REF = ifelse(NEE_VUT_REF_QC < 0.8, NA, GPP_NT_VUT_REF),
+                TA_F           = ifelse(TA_F_QC        < 0.8, NA, TA_F),
+                SW_IN_F        = ifelse(SW_IN_F_QC     < 0.8, NA, SW_IN_F),
+                LW_IN_F        = ifelse(LW_IN_F_QC     < 0.8, NA, LW_IN_F),
+                VPD_F          = ifelse(VPD_F_QC       < 0.8, NA, VPD_F),
+                PA_F           = ifelse(PA_F_QC        < 0.8, NA, PA_F),
+                P_F            = ifelse(P_F_QC         < 0.8, NA, P_F),
+                WS_F           = ifelse(WS_F_QC        < 0.8, NA, WS_F)) |> 
+
+  # drop QC variables (no longer needed)
+  dplyr::select(-ends_with("_QC"))
+
+```
+
+
+## Standardization
+
+```{r standardization, message=FALSE}
+
+# Standardization
+
+daily_fluxes |> 
+  summarise(across(where(is.numeric), 
+                   ~quantile(.x, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE))) |> 
+  t() |> 
+  as_tibble(rownames = "variable") |> 
+  setNames(c("variable", "min", "q25", "q50", "q75", "max"))
+
+```
+
+Adopt the code from this Chapter for fitting and evaluating the linear regression model and the KNN into your own RMarkdown file.Keep larger functions in a separate file in an appropriate directory and load the function definition as part of the RMarkdown.
+
+## Fitting and evaluating the linear regression and the KNN models
+
+
+## Data cleaning
+
+```{r data cleaning, message=FALSE}
+# Data cleaning: looks ok, no obviously bad data
+# no long tail, therefore no further target engineering
+
+figure_0 <- ggplot(data = daily_fluxes, aes(x = GPP_NT_VUT_REF, y = ..count..)) + 
+  geom_histogram()
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Data cleaning.png"),
+  plot = figure_0,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_0
+
+```
+
+
+## Data splitting and fitting
+
+```{r data splitting and fitting, message=FALSE}
+# Data splitting
+set.seed(1982)  # for reproducibility
+split <- rsample::initial_split(daily_fluxes, prop = 0.7, strata = "VPD_F")
+daily_fluxes_train <- rsample::training(split)
+daily_fluxes_test <- rsample::testing(split)
+
+# Model and pre-processing formulation, use all variables but LW_IN_F
+pp <- recipes::recipe(GPP_NT_VUT_REF ~ SW_IN_F + VPD_F + TA_F, 
+                      data = daily_fluxes_train |> drop_na()) |>
+  recipes::step_BoxCox(recipes::all_predictors()) |> 
+  recipes::step_center(recipes::all_numeric(), -recipes::all_outcomes()) |>
+  recipes::step_scale(recipes::all_numeric(), -recipes::all_outcomes())
+
+# Fit linear regression model
+mod_lm <- caret::train(
+  pp, 
+  data = daily_fluxes_train |> drop_na(), 
+  method = "lm",
+  trControl = caret::trainControl(method = "none"),
+  metric = "RMSE"
+)
+
+# Fit KNN model
+mod_knn <- caret::train(
+  pp, 
+  data = daily_fluxes_train |> drop_na(), 
+  method = "knn",
+  trControl = caret::trainControl(method = "none"),
+  tuneGrid = data.frame(k = 8),
+  metric = "RMSE"
+)
+
+```
+
+
+## Linear regression model evalutation
+
+```{r linear regression model evalutation, message=FALSE}
+
+# linear regression model
+figure_1 <- eval_model(mod = mod_lm, df_train = daily_fluxes_train, df_test = daily_fluxes_test) 
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Linear regression model evalutation.png"),
+  plot = figure_1,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_1
+
+```
+
+
+## KNN model evalutation
+
+```{r KNN model evalutation, message=FALSE}
+
+# KNN model
+figure_2 <- eval_model(mod = mod_knn, df_train = daily_fluxes_train, df_test = daily_fluxes_test)
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "KNN model evalutation.png"),
+  plot = figure_2,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_2
+
+```
+
+
+## Discussion
+
+Why is the difference between the evaluation on the training and the test set larger for the KNN model than for the linear regression model?
+
+The difference reflects the nature of KNN and linear regression related to bias-variance trade-off. KNN is a model with low-bias and high-variance, it therefore performs well on the training set (and overfitting it) but has more difficulties to generalize on the test set, resulting in a larger gap. Linear regression is a model with high-bias and low-variance. It may fit the training data less accurately but has stronger generalizability.
+
+
+Why does the evaluation on the test set indicate a better model performance of the KNN model than the linear regression model?
+
+This suggests that the relationship between data points is non-linear. Therefore KNN, that can investigate non-linear patterns, has better performance. 
+
+
+How would you position the KNN and the linear regression model along the spectrum of the bias-variance trade-off?
+
+Linear regression is a high-bias and low-variance model, tends to underfitt data.
+KNN is a low-bias and high-variance model, tends to overfitt data.
+
+
+## Temporal variations of observed and modelled GPP
+
+```{r temporal variations of observed and modelled GPP, message=FALSE}
+# Drop NA
+df <- daily_fluxes |> drop_na()
+
+# Add predictions
+df <- df |>
+  mutate(
+    pred_lm  = predict(mod_lm, newdata = df),
+    pred_knn = predict(mod_knn, newdata = df)
+  )
+
+# Pivot longer for plotting
+df_long <- df |>
+  select(TIMESTAMP, GPP_NT_VUT_REF, pred_lm, pred_knn) |>
+  pivot_longer(cols = c(GPP_NT_VUT_REF, pred_lm, pred_knn),
+               names_to = "Data", values_to = "GPP") |>
+  mutate(Data = recode(Data,
+                         GPP_NT_VUT_REF = "Observed",
+                         pred_lm = "Predicted (Linear)",
+                         pred_knn = "Predicted (KNN)"))
+
+# Plot: temporal variation
+figure_3 <- ggplot(data = df_long, 
+       aes(x = TIMESTAMP, y = GPP, color = Data)) +
+  geom_line(alpha = 0.7) +
+  labs(title = "Temporal Variations of Observed and Modelled GPP",
+       x = "Date", y = "GPP", color = "Data") +
+  theme_minimal(base_size = 14) +
+  scale_color_manual(values = c("black", "blue", "red"))
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Temporal variations of observed and modelled GPP.png"),
+  plot = figure_3,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_3
+
+```
+From the visualization above we can see that both models fit the observed data well, even though they both fail in adressing peak values of GPP.
+
+## The role of k
+
+Based on your understanding of KNN (and without running code), state a hypothesis for how the R2 and the MAE evaluated on the test and on the training set would change for k approaching 1 and for k approaching N (the number of observations in the data). Explain your hypothesis, referring to the bias-variance trade-off.
+
+The two cases indicate the extremes (min and max) of k values. 
+For k approaching 1 the model would achieve perfect fit on the training set (R2 close to 1 and MAE close to 0 ) resulting in an overfitt because errors in the data are given to much weight. Therefore, for the test set the fit would be lower (R2 lower then 1 and MAE higher than 0). In terms of bias-variance trade-off: low bias and high variance
+For k approaching N the training set would be underfitted with R2 close to 0 and high MAE. The test set would also have low model performance but might have improved values due to less overfitting than with k approaching 1. In terms of bias-variance trade-off: high bias and low variance. 
+
+
+## Model with different k
+Write code that splits the data into a training and a test set and repeats model fitting and evaluation for different values for k. Write (some of your) code into a function that takes k as an input and and returns the MAE determined on the test set.
+
+```{r model with different k, message=FALSE}
+# Data splitting occured already in chunk 6
+
+# define k values
+k_values <- seq(1, 100, by = 2)
+
+# Run evaluation and save results to data frame
+results_df <- eval_knn_diff_k(
+  k_values = k_values,
+  df_train = daily_fluxes_train,
+  df_test = daily_fluxes_test,
+  recipe = pp
+)
+
+# Create table to visualize results
+knitr::kable(
+  results_df, 
+  format = "html",
+  caption = "Results KNN diff k",
+  align = "c",
+  digits = 3)
+
+```
+
+## Visualization of model generalisability & complexity
+
+Visualize results, showing model generalisability as a function of model complexity.
+Describe how a “region” of overfitting and underfitting can be determined in your visualisation.
+
+```{r visualization of model generalisability & complexity, message=FALSE}
+# Visualise RMSE vs. k
+figure_4 <- ggplot(data = results_df, 
+       aes(x = k)) +
+  geom_line(aes(y = rmse_train, color = "Train RMSE"), size = 1) +
+  geom_line(aes(y = rmse_test, color = "Test RMSE"), size = 1) +
+  scale_color_manual(values = c("Train RMSE" = "blue", "Test RMSE" = "red")) +
+  labs(title = "Model Generalizability as a Function of Model Complexity (k)",
+       x = "Number of Neighbors (k)",
+       y = "RMSE",
+       color = "Dataset") +
+  theme_minimal(base_size = 14)
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Visualization of model generalisability & complexity
+.png"),
+  plot = figure_4,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_4
+
+```
+
+The plot above shows the RMSE value compared to the k value for both the training and test sets. Lower k values are overfitting leading to a good model performance on the training set but a poor fit on the test set. High k values tent to underfit leading to a model that fails to represent the structure of the data.
+
+Overfitting region
+This is the case at low k values and where the RMSE of the training set is very low and the RMSE of the test set much higher (big discrepancy between the two curves in the plot above)
+
+Underfitting region
+The k value is high and the RMSE of both training and test set are high and similar. The model is not representing the structure of the data
+
+
+## Optimal model
+
+Is there an “optimal” in terms of model generalisability? Edit your code to determine an optimal
+
+```{r optimal model, message=FALSE}
+
+# Run evaluation stopping at optimal k and save results to data frame
+results_df_optimal <- eval_knn_optimal_k(
+  k_values = k_values,
+  df_train = daily_fluxes_train,
+  df_test = daily_fluxes_test,
+  recipe = pp
+)
+
+# Select row with smallest RMSE test
+best_result <- results_df_optimal |>
+  filter(rmse_test == min(rmse_test))
+
+# Create table to visualize results
+knitr::kable(
+  best_result, 
+  format = "html",
+  caption = "Results KNN optimal k",
+  align = "c",
+  digits = 4)
+
+```
+The optimal model is the one that minimizes the RMSE on the test set. The table above illustrates the optimal result.

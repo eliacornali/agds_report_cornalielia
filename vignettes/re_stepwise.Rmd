@@ -1,0 +1,439 @@
+---
+title: "re_stepwise"
+author: "Elia Cornali"
+date: "2025-05-27"
+output: 
+  html_document:
+  toc: true
+---
+
+## Setup 
+
+```{r setup, message=FALSE}
+
+# Import libraries
+
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(tidyr)
+
+```
+
+## Reading data
+
+```{r reading data, message=FALSE}
+
+# Read csv data
+
+half_hourly_fluxes <- readr::read_csv(
+  here::here("data/df_for_stepwise_regression.csv"))
+
+# numerical variables only, remove NA
+data <- half_hourly_fluxes |>
+  dplyr::select(-starts_with("TIMESTAMP"), -starts_with("siteid")) |>
+  tidyr::drop_na()
+
+# Investigate data set
+names(data)
+
+
+```
+
+## Stepwise forward regression linear model
+
+```{r stepwise forward regression linear model, message=FALSE}
+# Select response and predictors
+# GPP is at index 14
+# siteID and TIMESTAMP are not predictors
+all_vars <- names(data)
+response <- all_vars[14] 
+predictors <- setdiff(all_vars[1:15], response)
+
+# Start with empty model
+selected_predictor <- c()  
+
+best_model <- lm(data = data, 
+                 as.formula(paste(response, "~ 1")))  
+
+# Write data frame "linear_model_summary" for results
+linear_model_summary <- data.frame(Step = integer(),
+                                   Added = character(),
+                                   R2 = numeric(),
+                                   AIC = numeric(),
+                                   stringsAsFactors = FALSE)
+
+# Define step for data frame
+step <- 1
+
+# Condition for while loop
+continue <- TRUE
+
+# While loop to add one predictor at a time
+# Define starting values for variables
+while (continue) {
+  best_r2 <- -Inf
+  best_predictor <- NULL
+  best_candidate_model <- NULL
+  best_aic <- Inf
+  
+  # Add one predictor at a time
+  for (i in predictors) {
+    # Linear regression
+    predictor <- c(selected_predictor, i)
+    model <- lm(data = data,
+                as.formula(paste(
+                  response, "~", paste(
+                    predictor, collapse = "+"))))
+    r2 <- summary(model)$r.squared
+    aic <- extractAIC(model)[2]
+      
+    # Chose better regression model
+    if (aic < best_aic) {
+      best_r2 <- r2
+      best_predictor <- i
+      best_candidate_model <- model
+      best_aic <- aic
+    }
+  }
+  
+ # Stop if no improvement is found or no variables left
+ if (is.null(best_predictor)) {
+    continue <- FALSE
+  } else {
+    # Update selections
+    selected_predictor <- c(selected_predictor, best_predictor)
+    predictors <- setdiff(predictors, best_predictor)
+    best_model <- best_candidate_model
+    
+    # Store results
+    linear_model_summary <- rbind(linear_model_summary,
+                                  data.frame(Step = step, 
+                                  Added = best_predictor, 
+                                  R2 = best_r2, 
+                                  AIC = best_aic))
+    step <- step + 1
+  }
+}
+
+# Add R2 changes to results
+linear_model_summary$Change_R2 <- c(linear_model_summary$R2[1],
+                                   diff(linear_model_summary$R2))
+
+# Add AIC changes to results
+linear_model_summary$Change_AIC <- c(linear_model_summary$AIC[1], 
+                                    diff(linear_model_summary$AIC))
+
+# Create table to visualize results
+knitr::kable(
+  linear_model_summary, 
+  format = "html",
+  caption = "Linear model results",
+  align = "c",
+  digits = 3)
+
+```
+The table above summarises the results of the stepwise forward regression using a linear model. The model adds one variable at a time and defines the resulting R2 and AIC values. The first three variables (namely PPFD_IN, LW_IN_F and VPD_F) cause a significant increase in R2 and drop in AIC values, indicating a strong linear correlation with GPP. After step 6 the increase in R2 and the reduction in AIC are minor, indicating that the added variables are not improving the model fit significantly. From step 10 on the AIC is starting to increase again, suggesting that the optimal model is before that point. 
+
+
+## Stepwise forward regression quadratic model
+
+```{r stepwise forward regression quadratic model, message=FALSE}
+# Select response and predictors
+# GPP is at index 14
+# siteID and TIMESTAMP are not predictors
+all_vars <- names(data)
+response <- all_vars[14] 
+predictors <- setdiff(all_vars[1:15], response)
+
+# Start with empty model
+selected_predictor <- c()  
+
+best_model <- lm(data = data, 
+                 as.formula(paste(response, "~ 1")))  
+
+# Write data frame "quadratic_model_summary" for results
+quadratic_model_summary <- data.frame(Step = integer(),
+                                   Added = character(),
+                                   R2 = numeric(),
+                                   AIC = numeric(),
+                                   stringsAsFactors = FALSE)
+
+# Define step for data frame
+step <- 1
+
+# Condition for while loop
+continue <- TRUE
+
+# While loop to add one predictor at a time
+# Define starting values for variables
+while (continue) {
+  best_r2 <- -Inf
+  best_predictor <- NULL
+  best_candidate_model <- NULL
+  best_aic <- Inf
+  
+  # Add one predictor at a time
+  for (i in predictors) {
+    # Quadratic regression
+    predictor_poly <- c(selected_predictor, i, paste0("I(", i, "^2)"))
+    model_poly <- lm(data = data,
+                     as.formula(paste(
+                       response, "~", paste(
+                         predictor_poly, collapse = "+"))))
+    r2_poly <- summary(model_poly)$r.squared
+    aic_poly <- extractAIC(model_poly)[2]
+    
+    if (aic_poly < best_aic) {
+      best_r2 <- r2_poly
+      best_predictor <- i
+      best_candidate_model <- model_poly
+      best_aic <- aic_poly
+    }
+  }
+  
+ # Stop if no improvement is found or no variables left
+ if (is.null(best_predictor)) {
+    continue <- FALSE
+  } else {
+    # Update selections
+    selected_predictor <- c(selected_predictor, best_predictor)
+    predictors <- setdiff(predictors, best_predictor)
+    best_model <- best_candidate_model
+    
+    # Store results
+    quadratic_model_summary <- rbind(quadratic_model_summary,
+                                     data.frame(Step = step, 
+                                     Added = best_predictor, 
+                                     R2 = best_r2, 
+                                     AIC = best_aic))
+    step <- step + 1
+  }
+}
+
+# Add R2 changes to results
+quadratic_model_summary$Delta_R2 <- c(quadratic_model_summary$R2[1], 
+                                      diff(quadratic_model_summary$R2))
+
+# Add AIC changes to results
+quadratic_model_summary$Delta_AIC <- c(quadratic_model_summary$AIC[1], 
+                                       diff(quadratic_model_summary$AIC))
+
+# Create table to visualize results
+knitr::kable(
+  quadratic_model_summary, 
+  format = "html",
+  caption = "Quadratic model results",
+  align = "c",
+  digits = 3)
+
+```
+The table above summarises the stepwise forward regression results for the quadratic model. Similarly to the linear model there is a significant improve of the model during the first three steps. The third variable that is added differs from the linear model (VPD_F_MDS instead of VPD_F) and improves the model fit significantly. Also the variable USTAR provides a significant improvement of the model fit as visible from the change in AIC. After step 4 there is an increase in AIC and decrease in R2 which could be a sign of overfitting. In general the quadratic model starts and ends with better R2 and AIC values as the linear model, suggesting a better fit when using the former model. 
+
+## Visualisations
+
+## Linear model fit
+
+```{r linear model fit, message=FALSE}
+
+# Define x variables
+variables <- setdiff(names(data), "GPP_NT_VUT_REF")
+
+# List to save plots
+plots <- list()
+
+# Plot predictors and response
+for (i in seq(variables)) {
+  var_name <- variables[i]
+  plot <- ggplot(
+    data = data,
+    aes(x = .data[[var_name]], y = GPP_NT_VUT_REF)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(formula = y ~ x, method = "lm",
+                aes(color = "lm"), se = FALSE) +
+    labs(x = var_name, 
+         y = "GPP",
+         color = "Reg") +
+    theme(
+      axis.title.x = element_text(size = 8),
+      axis.title.y = element_text(size = 8),
+      axis.text.x = element_text(size = 6),
+      axis.text.y = element_text(size = 6),
+      legend.text = element_text(size = 6),
+      legend.title = element_text(size = 8)
+    )
+  
+  plots[[i]] <- plot
+}
+
+# Combine plots
+figure_1 <- cowplot::plot_grid(
+  plotlist = plots,
+  ncol = 3,
+  labels = "auto",
+  label_size = 8)
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Linear model fit.png"),
+  plot = figure_1,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_1
+
+```
+The visualisation of the linear model regressions are consistent with the results of the table. Variables that improve the model significantly show stronger linear relation to GPP. 
+
+## Quadratic model fit
+
+```{r quadratic model fit, message=FALSE}
+
+# Define x variables
+variables <- setdiff(names(data), "GPP_NT_VUT_REF")
+
+# List to save plots
+plots <- list()
+
+# Plot predictors and response
+for (i in seq(variables)) {
+  var_name <- variables[i]
+  plot <- ggplot(
+    data = data,
+    aes(x = .data[[var_name]], y = GPP_NT_VUT_REF)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(formula = y ~ poly(x, 2), method = "lm",
+                aes(color = "poly2"), se = FALSE) +
+    labs(x = var_name, 
+         y = "GPP",
+         color = "Reg") +
+    theme(
+      axis.title.x = element_text(size = 8),
+      axis.title.y = element_text(size = 8),
+      axis.text.x = element_text(size = 6),
+      axis.text.y = element_text(size = 6),
+      legend.text = element_text(size = 6),
+      legend.title = element_text(size = 8)
+    )
+  
+  plots[[i]] <- plot
+}
+
+# combine plots
+figure_2 <- cowplot::plot_grid(
+  plotlist = plots,
+  ncol = 3,
+  labels = "auto",
+  label_size = 8)
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Quadratic model fit.png"),
+  plot = figure_2,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_2
+
+```
+The visualisation of the quadratic model regressions are consistent with the results of the table. Variables that improve the model significantly show stronger quadratic relation to GPP. 
+
+
+## Model comparison R2 and AIC results
+
+```{r linear model R2 and AIC results, message=FALSE}
+# Bar chart plot linear model R2 
+plot_1 <- ggplot(
+  data = linear_model_summary, 
+  aes(x = reorder(Added, -R2), y = R2)) +
+  geom_segment(aes(x = reorder(Added, -R2), xend = reorder(Added, -R2), y = 0.3, yend = R2), 
+               size = 3, color = "grey40") +
+  geom_point(aes(x = reorder(Added, -R2), y = R2), size = 8, color = "red") +
+  geom_text(aes(x = reorder(Added, -R2), y = R2, label = format(R2, digits = 2)),
+            size = 3, color = "white") +
+  labs(title = "R2 Linear Model",
+       x = "Predictor", 
+       y = "R2") +
+  scale_y_continuous(limits = c(0.3, 0.6), expand = c(0, 0)) +
+  coord_flip() +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Bar chart plot linear model AIC
+plot_2 <- ggplot(
+  data = linear_model_summary, 
+  aes(x = reorder(Added, AIC), y = AIC)) +
+  geom_segment(aes(x = reorder(Added, AIC), xend = reorder(Added, AIC), y = 15000, yend = AIC), 
+               size = 3, color = "grey40") +
+  geom_point(aes(x = reorder(Added, AIC), y = AIC), size = 8, color = "red") +
+  geom_text(aes(x = reorder(Added, AIC), y = AIC, label = format(AIC, digits = 2)),
+            size = 3, color = "white") +
+  labs(title = "AIC Linear Model",
+       x = "Predictor", 
+       y = "AIC") +
+  scale_y_continuous(limits = c(15000, 19000), expand = c(0, 0)) +
+  coord_flip() +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Bar chart plot quadratic model R2 
+plot_3 <- ggplot(
+  data = quadratic_model_summary, 
+  aes(x = reorder(Added, -R2), y = R2)) +
+  geom_segment(aes(x = reorder(Added, -R2), xend = reorder(Added, -R2), y = 0.3, yend = R2), 
+               size = 3, color = "grey40") +
+  geom_point(aes(x = reorder(Added, -R2), y = R2), size = 8, color = "red") +
+  geom_text(aes(x = reorder(Added, -R2), y = R2, label = format(R2, digits = 2)),
+            size = 3, color = "white") +
+  labs(title = "R2 quadratic model",
+       x = "Predictor", 
+       y = "R2") +
+  scale_y_continuous(limits = c(0.3, 0.6), expand = c(0, 0)) +
+  coord_flip() +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Bar chart plot quadratic model AIC
+plot_4 <- ggplot(
+  data = quadratic_model_summary, 
+  aes(x = reorder(Added, AIC), y = AIC)) +
+  geom_segment(aes(x = reorder(Added, AIC), xend = reorder(Added, AIC), y = 15000, yend = AIC), 
+               size = 3, color = "grey40") +
+  geom_point(aes(x = reorder(Added, AIC), y = AIC), size = 8, color = "red") +
+  geom_text(aes(x = reorder(Added, AIC), y = AIC, label = format(AIC, digits = 2)),
+            size = 3, color = "white") +
+  labs(title = "AIC quadratic model",
+       x = "Predictor", 
+       y = "AIC") +
+  scale_y_continuous(limits = c(15000, 19000), expand = c(0, 0)) +
+  coord_flip() +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+# combine plots
+figure_3 <- cowplot::plot_grid(
+  data = plot_1, plot_2, plot_3, plot_4,
+  ncol = 2,
+  labels = "auto")
+
+# Save figure in repository figures
+ggplot2::ggsave(
+  filename = here::here("figures", "Model comparison R2 and AIC results.png"),
+  plot = figure_3,  
+  width = 10, height = 6, dpi = 300
+)
+
+# Depict plot in html version
+figure_3
+
+```
+The viualisation of the R2 and AIC values for the linear and quadratic model regression are illustrated in the plot above. The plot emphasises again the strong model improvement when adding the variables PPFD_IN, LW_IN_F,
+TA_F_MDS and VPD_F with slight changes between the two models. The steps in the improvements of the R2 and AIC values suggest that the variable USTAR also improves the model.
+
+
+## Interpretation
+The model shows that photosynthetic photon flux density (PPFD), incoming long wave radiation (LW_IN_F) and vapor pressure deficit (VPD_F) are the core predictors of GPP. Other variables that have moderate impact on GPP are air temperature (TA_F) and friction velocity (USTAR). 
+
